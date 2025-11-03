@@ -3,6 +3,7 @@ package blockchain
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	doublylinkedtree "github.com/OffchainLabs/prysm/v7/beacon-chain/forkchoice/doubly-linked-tree"
@@ -142,6 +143,7 @@ func (s *Service) shouldOverrideFCU(newHeadRoot [32]byte, proposingSlot primitiv
 				"threshold":      doublylinkedtree.ProcessAttestationsThreshold,
 			}).Info("Attempted late block reorg aborted due to attestations after threshold")
 			lateBlockFailedAttemptFirstThreshold.Inc()
+			debug.PrintStack()
 		}
 	}
 	return false

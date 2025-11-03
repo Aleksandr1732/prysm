@@ -7,6 +7,7 @@ import (
 
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/feed"
 	statefeed "github.com/OffchainLabs/prysm/v7/beacon-chain/core/feed/state"
+	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/helpers"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/forkchoice"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/state"
 	"github.com/OffchainLabs/prysm/v7/config/features"
@@ -18,6 +19,7 @@ import (
 	"github.com/OffchainLabs/prysm/v7/encoding/bytesutil"
 	"github.com/OffchainLabs/prysm/v7/monitoring/tracing/trace"
 	ethpbv1 "github.com/OffchainLabs/prysm/v7/proto/eth/v1"
+	ethpb "github.com/OffchainLabs/prysm/v7/proto/prysm/v1alpha1"
 	"github.com/OffchainLabs/prysm/v7/runtime/version"
 	"github.com/OffchainLabs/prysm/v7/time/slots"
 	"github.com/pkg/errors"
@@ -144,7 +146,7 @@ func (s *Service) saveHead(ctx context.Context, newHeadRoot [32]byte, headBlock 
 			},
 		})
 
-		if err := s.saveOrphanedOperations(ctx, oldHeadRoot, newHeadRoot); err != nil {
+		if err := s.saveOrphanedOperations(ctx, oldHeadRoot, newHeadRoot, headState); err != nil {
 			return err
 		}
 		reorgCount.Inc()
@@ -374,7 +376,7 @@ func (s *Service) notifyNewHeadEvent(
 
 // This saves the Attestations and BLSToExecChanges between `orphanedRoot` and the common ancestor root that is derived using `newHeadRoot`.
 // It also filters out the attestations that is one epoch older as a defense so invalid attestations don't flow into the attestation pool.
-func (s *Service) saveOrphanedOperations(ctx context.Context, orphanedRoot [32]byte, newHeadRoot [32]byte) error {
+func (s *Service) saveOrphanedOperations(ctx context.Context, orphanedRoot [32]byte, newHeadRoot [32]byte, headState state.BeaconState) error {
 	commonAncestorRoot, _, err := s.cfg.ForkChoiceStore.CommonAncestor(ctx, newHeadRoot, orphanedRoot)
 	switch {
 	// Exit early if there's no common ancestor and root doesn't exist, there would be nothing to save.
@@ -397,31 +399,14 @@ func (s *Service) saveOrphanedOperations(ctx context.Context, orphanedRoot [32]b
 		if orphanedBlk.Block().Slot()+params.BeaconConfig().SlotsPerEpoch <= s.CurrentSlot() {
 			break
 		}
-		for _, a := range orphanedBlk.Block().Body().Attestations() {
-			// if the attestation is one epoch older, it wouldn't been useful to save it.
-			if a.GetData().Slot+params.BeaconConfig().SlotsPerEpoch < s.CurrentSlot() {
-				continue
+		if orphanedBlk.Version() >= version.Electra {
+			if err = s.saveOrphanedAttsElectra(ctx, headState, orphanedBlk.Block().Body().Attestations()); err != nil {
+				log.WithError(err).Warn("Could not save reorg attestations")
 			}
-			if features.Get().EnableExperimentalAttestationPool {
-				if err = s.cfg.AttestationCache.Add(a); err != nil {
-					return err
-				}
-			} else {
-				if orphanedBlk.Version() >= version.Electra {
-					if err = s.cfg.AttPool.SaveBlockAttestation(a); err != nil {
-						return err
-					}
-				} else if a.IsAggregated() {
-					if err = s.cfg.AttPool.SaveAggregatedAttestation(a); err != nil {
-						return err
-					}
-				} else {
-					if err = s.cfg.AttPool.SaveUnaggregatedAttestation(a); err != nil {
-						return err
-					}
-				}
+		} else {
+			if err = s.saveOrphanedAtts(orphanedBlk.Block().Body().Attestations()); err != nil {
+				log.WithError(err).Warn("Could not save reorg attestations")
 			}
-			saveOrphanedAttCount.Inc()
 		}
 		for _, as := range orphanedBlk.Block().Body().AttesterSlashings() {
 			if err := s.cfg.SlashingPool.InsertAttesterSlashing(ctx, s.headStateReadOnly(ctx), as); err != nil {
@@ -447,6 +432,70 @@ func (s *Service) saveOrphanedOperations(ctx context.Context, orphanedRoot [32]b
 		}
 		parentRoot := orphanedBlk.Block().ParentRoot()
 		orphanedRoot = bytesutil.ToBytes32(parentRoot[:])
+	}
+	return nil
+}
+
+func (s *Service) saveOrphanedAtts(atts []ethpb.Att) error {
+	for _, a := range atts {
+		// if the attestation is one epoch older, it wouldn't been useful to save it.
+		if a.GetData().Slot+params.BeaconConfig().SlotsPerEpoch < s.CurrentSlot() {
+			continue
+		}
+		if features.Get().EnableExperimentalAttestationPool {
+			if err := s.cfg.AttestationCache.Add(a); err != nil {
+				return err
+			}
+		} else if a.IsAggregated() {
+			if err := s.cfg.AttPool.SaveAggregatedAttestation(a); err != nil {
+				return err
+			}
+		} else if err := s.cfg.AttPool.SaveUnaggregatedAttestation(a); err != nil {
+			return err
+		}
+		saveOrphanedAttCount.Inc()
+	}
+	return nil
+}
+
+func (s *Service) saveOrphanedAttsElectra(ctx context.Context, headState state.BeaconState, atts []ethpb.Att) error {
+	for _, orphaned := range atts {
+		// if the attestation is one epoch older, it wouldn't been useful to save it.
+		if orphaned.GetData().Slot+params.BeaconConfig().SlotsPerEpoch < s.CurrentSlot() {
+			continue
+		}
+
+		// We don't want to recompute committees. If they are not cached already,
+		// we allow attestations to stay in the pool. If these attestations are
+		// included in a later block, they will be redundant. But given that
+		// they were not cached in the first place, it's unlikely that they
+		// will be chosen into a block.
+		ok, committees, err := helpers.AttestationCommitteesFromCache(ctx, headState, orphaned)
+		if err != nil {
+			return errors.Wrap(err, "could not get attestation committees")
+		}
+		if !ok {
+			log.Error("Attestation committees are not cached. Skipping saving orphaned attestation.")
+			return nil
+		}
+		decomposed, err := s.decomposeOnChainAggregate(orphaned, committees)
+		if err != nil {
+			return errors.Wrap(err, "could not decompose attestation")
+		}
+		for _, a := range decomposed {
+			if features.Get().EnableExperimentalAttestationPool {
+				if err = s.cfg.AttestationCache.Add(a); err != nil {
+					return err
+				}
+			} else if a.IsAggregated() {
+				if err = s.cfg.AttPool.SaveAggregatedAttestation(a); err != nil {
+					return err
+				}
+			} else if err = s.cfg.AttPool.SaveUnaggregatedAttestation(a); err != nil {
+				return err
+			}
+		}
+		saveOrphanedAttCount.Inc()
 	}
 	return nil
 }

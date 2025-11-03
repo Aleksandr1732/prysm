@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OffchainLabs/go-bitfield"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/blocks"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/helpers"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/peerdas"
@@ -460,6 +459,9 @@ func (s *Service) pruneAttsFromPool(ctx context.Context, headState state.BeaconS
 func (s *Service) pruneCoveredAttsFromPool(ctx context.Context, headState state.BeaconState, att ethpb.Att) error {
 	switch {
 	case !att.IsAggregated():
+		if features.Get().EnableExperimentalAttestationPool {
+			return errors.Wrap(s.cfg.AttestationCache.DeleteCovered(att), "could not delete covered attestation")
+		}
 		return s.cfg.AttPool.DeleteUnaggregatedAttestation(att)
 	case att.Version() == version.Phase0:
 		if features.Get().EnableExperimentalAttestationPool {
@@ -499,44 +501,22 @@ func (s *Service) pruneCoveredElectraAttsFromPool(ctx context.Context, headState
 		log.Debug("Attestation committees are not cached. Skipping attestation pruning.")
 		return nil
 	}
-
-	committeeIndices := att.CommitteeBitsVal().BitIndices()
-	offset := uint64(0)
-
-	// Sanity check as this should never happen
-	if len(committeeIndices) != len(committees) {
-		return errors.New("committee indices and committees have different lengths")
+	decomposed, err := s.decomposeOnChainAggregate(att, committees)
+	if err != nil {
+		return errors.Wrap(err, "could not decompose attestation")
 	}
-
-	for i, c := range committees {
-		ab := bitfield.NewBitlist(uint64(len(c)))
-		for j := uint64(0); j < uint64(len(c)); j++ {
-			ab.SetBitAt(j, att.GetAggregationBits().BitAt(j+offset))
-		}
-
-		cb := primitives.NewAttestationCommitteeBits()
-		cb.SetBitAt(uint64(committeeIndices[i]), true)
-
-		a := &ethpb.AttestationElectra{
-			AggregationBits: ab,
-			Data:            att.GetData(),
-			CommitteeBits:   cb,
-			Signature:       make([]byte, fieldparams.BLSSignatureLength),
-		}
-
+	for _, a := range decomposed {
 		if features.Get().EnableExperimentalAttestationPool {
 			if err = s.cfg.AttestationCache.DeleteCovered(a); err != nil {
 				return errors.Wrap(err, "could not delete covered attestation")
 			}
-		} else if !a.IsAggregated() {
-			if err = s.cfg.AttPool.DeleteUnaggregatedAttestation(a); err != nil {
-				return errors.Wrap(err, "could not delete unaggregated attestation")
+		} else if a.IsAggregated() {
+			if err = s.cfg.AttPool.DeleteAggregatedAttestation(a); err != nil {
+				return errors.Wrap(err, "could not delete aggregated attestation")
 			}
-		} else if err = s.cfg.AttPool.DeleteAggregatedAttestation(a); err != nil {
-			return errors.Wrap(err, "could not delete aggregated attestation")
+		} else if err = s.cfg.AttPool.DeleteUnaggregatedAttestation(a); err != nil {
+			return errors.Wrap(err, "could not delete unaggregated attestation")
 		}
-
-		offset += uint64(len(c))
 	}
 
 	return nil

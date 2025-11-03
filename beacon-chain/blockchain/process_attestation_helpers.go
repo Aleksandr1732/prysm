@@ -6,10 +6,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/OffchainLabs/go-bitfield"
 	"github.com/OffchainLabs/prysm/v7/async"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/core/transition"
 	forkchoicetypes "github.com/OffchainLabs/prysm/v7/beacon-chain/forkchoice/types"
 	"github.com/OffchainLabs/prysm/v7/beacon-chain/state"
+	fieldparams "github.com/OffchainLabs/prysm/v7/config/fieldparams"
 	"github.com/OffchainLabs/prysm/v7/consensus-types/blocks"
 	"github.com/OffchainLabs/prysm/v7/consensus-types/primitives"
 	"github.com/OffchainLabs/prysm/v7/encoding/bytesutil"
@@ -191,4 +193,36 @@ func (s *Service) verifyBeaconBlock(ctx context.Context, data *ethpb.Attestation
 		return fmt.Errorf("could not process attestation for future block, block.Slot=%d > attestation.Data.Slot=%d", b.Block().Slot(), data.Slot)
 	}
 	return nil
+}
+
+// TODO doc
+func (s *Service) decomposeOnChainAggregate(att ethpb.Att, committees [][]primitives.ValidatorIndex) ([]ethpb.Att, error) {
+	committeeIndices := att.CommitteeBitsVal().BitIndices()
+	offset := uint64(0)
+
+	// Sanity check as this should never happen
+	if len(committeeIndices) != len(committees) {
+		return nil, errors.New("committee indices and committees have different lengths")
+	}
+
+	atts := make([]ethpb.Att, 0, len(committees))
+	for i, c := range committees {
+		ab := bitfield.NewBitlist(uint64(len(c)))
+		for j := uint64(0); j < uint64(len(c)); j++ {
+			ab.SetBitAt(j, att.GetAggregationBits().BitAt(j+offset))
+		}
+
+		cb := primitives.NewAttestationCommitteeBits()
+		cb.SetBitAt(uint64(committeeIndices[i]), true)
+
+		atts = append(atts, &ethpb.AttestationElectra{
+			AggregationBits: ab,
+			Data:            att.GetData(),
+			CommitteeBits:   cb,
+			Signature:       make([]byte, fieldparams.BLSSignatureLength),
+		})
+
+		offset += uint64(len(c))
+	}
+	return atts, nil
 }
