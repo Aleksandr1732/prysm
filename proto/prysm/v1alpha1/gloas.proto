@@ -185,7 +185,10 @@ message SignedBeaconBlockGloas {
 //     [All previous fields from earlier forks]
 //     # Replaced existing latest execution header position
 //     latest_execution_payload_bid: ExecutionPayloadBid
-//     # New fields in Gloas:EIP7732
+//     builders: List[Builder, BUILDER_REGISTRY_LIMIT]
+//     # [New in Gloas:EIP7732]
+//     next_withdrawal_builder_index: BuilderIndex
+//     # [New in Gloas:EIP7732]
 //     execution_payload_availability: Bitvector[SLOTS_PER_HISTORICAL_ROOT]
 //     builder_pending_payments: Vector[BuilderPendingPayment, 2 * SLOTS_PER_EPOCH]
 //     builder_pending_withdrawals: List[BuilderPendingWithdrawal, BUILDER_PENDING_WITHDRAWALS_LIMIT]
@@ -300,13 +303,19 @@ message BeaconStateGloas {
   [ (ethereum.eth.ext.ssz_size) = "proposer_lookahead_size" ];
 
   // Fields introduced in Gloas fork [14001-15000]
-  bytes execution_payload_availability = 14001 [
+  repeated Builder builders = 14001
+  [ (ethereum.eth.ext.ssz_max) = "builder_registry_limit" ];
+  uint64 next_withdrawal_builder_index = 14002
+  [ (ethereum.eth.ext.cast_type) =
+  "github.com/OffchainLabs/prysm/v7/consensus-types/"
+      "primitives.ValidatorIndex" ];
+  bytes execution_payload_availability = 14003 [
     (ethereum.eth.ext.ssz_size) = "execution_payload_availability.size"
   ];
-  repeated BuilderPendingPayment builder_pending_payments = 14002 [(ethereum.eth.ext.ssz_size) = "builder_pending_payments.size"];
-  repeated BuilderPendingWithdrawal builder_pending_withdrawals = 14003 [(ethereum.eth.ext.ssz_max) = "1048576"];
-  bytes latest_block_hash = 14004 [ (ethereum.eth.ext.ssz_size) = "32" ];
-  bytes latest_withdrawals_root = 14005 [ (ethereum.eth.ext.ssz_size) = "32" ];
+  repeated BuilderPendingPayment builder_pending_payments = 14004 [(ethereum.eth.ext.ssz_size) = "builder_pending_payments.size"];
+  repeated BuilderPendingWithdrawal builder_pending_withdrawals = 14005 [(ethereum.eth.ext.ssz_max) = "1048576"];
+  bytes latest_block_hash = 14006 [ (ethereum.eth.ext.ssz_size) = "32" ];
+  bytes latest_withdrawals_root = 14007 [ (ethereum.eth.ext.ssz_size) = "32" ];
 }
 
 // BuilderPendingPayment represents a pending payment to a builder.
@@ -330,7 +339,6 @@ message BuilderPendingPayment {
 //     fee_recipient: ExecutionAddress
 //     amount: Gwei
 //     builder_index: ValidatorIndex
-//     withdrawable_epoch: Epoch
 message BuilderPendingWithdrawal {
   bytes fee_recipient = 1 [ (ethereum.eth.ext.ssz_size) = "20" ];
   uint64 amount = 2 [
@@ -341,10 +349,6 @@ message BuilderPendingWithdrawal {
   [ (ethereum.eth.ext.cast_type) =
   "github.com/OffchainLabs/prysm/v7/consensus-types/"
       "primitives.ValidatorIndex" ];
-  uint64 withdrawable_epoch = 4 [
-    (ethereum.eth.ext.cast_type) =
-        "github.com/OffchainLabs/prysm/v7/consensus-types/primitives.Epoch"
-  ];
 }
 
 // DataColumnSidecarGloas represents a data column sidecar in the Gloas fork.
@@ -420,4 +424,30 @@ message ExecutionPayloadEnvelope {
 message SignedExecutionPayloadEnvelope {
   ExecutionPayloadEnvelope message = 1;
   bytes signature = 2 [ (ethereum.eth.ext.ssz_size) = "96" ];
+}
+
+// Builder represents a builder in the Gloas fork.
+//
+// Spec:
+// class Builder(Container):
+//     pubkey: BLSPubkey
+//     execution_address: ExecutionAddress
+//     balance: Gwei
+//     deposit_epoch: Epoch
+//     withdrawable_epoch: Epoch
+message Builder {
+  bytes pubkey = 1 [ (ethereum.eth.ext.ssz_size) = "48" ];
+  bytes execution_address = 2 [ (ethereum.eth.ext.ssz_size) = "20" ];
+  uint64 balance = 3 [
+    (ethereum.eth.ext.cast_type) =
+        "github.com/OffchainLabs/prysm/v7/consensus-types/primitives.Gwei"
+  ];
+  uint64 deposit_epoch = 4 [
+    (ethereum.eth.ext.cast_type) =
+        "github.com/OffchainLabs/prysm/v7/consensus-types/primitives.Epoch"
+  ];
+  uint64 withdrawable_epoch = 5 [
+    (ethereum.eth.ext.cast_type) =
+        "github.com/OffchainLabs/prysm/v7/consensus-types/primitives.Epoch"
+  ];
 }

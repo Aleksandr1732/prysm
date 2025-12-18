@@ -120,6 +120,8 @@ var (
 	)
 
 	gloasAdditionalFields = []types.FieldIndex{
+		types.Builders,
+		types.NextWithdrawalBuilderIndex,
 		types.ExecutionPayloadAvailability,
 		types.BuilderPendingPayments,
 		types.BuilderPendingWithdrawals,
@@ -145,7 +147,7 @@ const (
 	denebSharedFieldRefCount     = 7
 	electraSharedFieldRefCount   = 10
 	fuluSharedFieldRefCount      = 11
-	gloasSharedFieldRefCount     = 12 // Adds PendingBuilderWithdrawal to the shared-ref set and LatestExecutionPayloadHeader is removed
+	gloasSharedFieldRefCount     = 13 // Adds Builders + BuilderPendingWithdrawals to the shared-ref set and LatestExecutionPayloadHeader is removed
 )
 
 // InitializeFromProtoPhase0 the beacon state from a protobuf representation.
@@ -817,6 +819,8 @@ func InitializeFromProtoUnsafeGloas(st *ethpb.BeaconStateGloas) (state.BeaconSta
 		pendingConsolidations:         st.PendingConsolidations,
 		proposerLookahead:             proposerLookahead,
 		latestExecutionPayloadBid:     st.LatestExecutionPayloadBid,
+		builders:                      st.Builders,
+		nextWithdrawalBuilderIndex:    st.NextWithdrawalBuilderIndex,
 		executionPayloadAvailability:  st.ExecutionPayloadAvailability,
 		builderPendingPayments:        st.BuilderPendingPayments,
 		builderPendingWithdrawals:     st.BuilderPendingWithdrawals,
@@ -861,6 +865,7 @@ func InitializeFromProtoUnsafeGloas(st *ethpb.BeaconStateGloas) (state.BeaconSta
 	b.sharedFieldReferences[types.PendingPartialWithdrawals] = stateutil.NewRef(1)
 	b.sharedFieldReferences[types.PendingConsolidations] = stateutil.NewRef(1)
 	b.sharedFieldReferences[types.ProposerLookahead] = stateutil.NewRef(1)
+	b.sharedFieldReferences[types.Builders] = stateutil.NewRef(1)                  // New in Gloas.
 	b.sharedFieldReferences[types.BuilderPendingWithdrawals] = stateutil.NewRef(1) // New in Gloas.
 
 	state.Count.Inc()
@@ -932,6 +937,7 @@ func (b *BeaconState) Copy() state.BeaconState {
 		pendingDeposits:            b.pendingDeposits,
 		pendingPartialWithdrawals:  b.pendingPartialWithdrawals,
 		pendingConsolidations:      b.pendingConsolidations,
+		builders:                   b.builders,
 
 		// Everything else, too small to be concerned about, constant size.
 		genesisValidatorsRoot:               b.genesisValidatorsRoot,
@@ -948,6 +954,7 @@ func (b *BeaconState) Copy() state.BeaconState {
 		latestExecutionPayloadHeaderCapella: b.latestExecutionPayloadHeaderCapella.Copy(),
 		latestExecutionPayloadHeaderDeneb:   b.latestExecutionPayloadHeaderDeneb.Copy(),
 		latestExecutionPayloadBid:           b.latestExecutionPayloadBid.Copy(),
+		nextWithdrawalBuilderIndex:          b.nextWithdrawalBuilderIndex,
 		executionPayloadAvailability:        b.executionPayloadAvailabilityVal(),
 		builderPendingPayments:              b.builderPendingPaymentsVal(),
 		builderPendingWithdrawals:           b.builderPendingWithdrawalsVal(),
@@ -1328,6 +1335,10 @@ func (b *BeaconState) rootSelector(ctx context.Context, field types.FieldIndex) 
 		return stateutil.ProposerLookaheadRoot(b.proposerLookahead)
 	case types.LatestExecutionPayloadBid:
 		return b.latestExecutionPayloadBid.HashTreeRoot()
+	case types.Builders:
+		return stateutil.BuildersRoot(b.builders)
+	case types.NextWithdrawalBuilderIndex:
+		return ssz.Uint64Root(uint64(b.nextWithdrawalBuilderIndex)), nil
 	case types.ExecutionPayloadAvailability:
 		return stateutil.ExecutionPayloadAvailabilityRoot(b.executionPayloadAvailability)
 

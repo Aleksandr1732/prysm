@@ -47,6 +47,25 @@ func (b *BeaconState) builderPendingWithdrawalsVal() []*ethpb.BuilderPendingWith
 	return withdrawals
 }
 
+// buildersVal returns a copy of the builders registry.
+// This assumes that a lock is already held on BeaconState.
+func (b *BeaconState) buildersVal() []*ethpb.Builder {
+	if b.builders == nil {
+		return nil
+	}
+
+	builders := make([]*ethpb.Builder, len(b.builders))
+	for i := range builders {
+		builder := b.builders[i]
+		if builder == nil {
+			continue
+		}
+		builders[i] = ethpb.CopyBuilder(builder)
+	}
+
+	return builders
+}
+
 // latestBlockHashVal returns a copy of the latest block hash.
 // This assumes that a lock is already held on BeaconState.
 func (b *BeaconState) latestBlockHashVal() []byte {

@@ -116,6 +116,10 @@ func (f FieldIndex) String() string {
 		return "pendingConsolidations"
 	case ProposerLookahead:
 		return "proposerLookahead"
+	case Builders:
+		return "builders"
+	case NextWithdrawalBuilderIndex:
+		return "nextWithdrawalBuilderIndex"
 	case ExecutionPayloadAvailability:
 		return "executionPayloadAvailability"
 	case BuilderPendingPayments:
@@ -211,16 +215,20 @@ func (f FieldIndex) RealPosition() int {
 		return 36
 	case ProposerLookahead:
 		return 37
-	case ExecutionPayloadAvailability:
+	case Builders:
 		return 38
-	case BuilderPendingPayments:
+	case NextWithdrawalBuilderIndex:
 		return 39
-	case BuilderPendingWithdrawals:
+	case ExecutionPayloadAvailability:
 		return 40
-	case LatestBlockHash:
+	case BuilderPendingPayments:
 		return 41
-	case LatestWithdrawalsRoot:
+	case BuilderPendingWithdrawals:
 		return 42
+	case LatestBlockHash:
+		return 43
+	case LatestWithdrawalsRoot:
+		return 44
 	default:
 		return -1
 	}
@@ -287,6 +295,8 @@ const (
 	PendingPartialWithdrawals     // Electra: EIP-7251
 	PendingConsolidations         // Electra: EIP-7251
 	ProposerLookahead             // Fulu: EIP-7917
+	Builders                      // Gloas: EIP-7732
+	NextWithdrawalBuilderIndex    // Gloas: EIP-7732
 	ExecutionPayloadAvailability  // Gloas: EIP-7732
 	BuilderPendingPayments        // Gloas: EIP-7732
 	BuilderPendingWithdrawals     // Gloas: EIP-7732
